@@ -1,0 +1,411 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Plus, 
+  History, 
+  BarChart3, 
+  Trash2, 
+  Save, 
+  Beef,
+  ClipboardList,
+  AlertCircle,
+  ChevronDown,
+  Layers,
+  CheckCircle2,
+  Printer,
+  ChevronRight
+} from 'lucide-react';
+
+// Configuração de categorias e cortes
+const CATEGORIAS = {
+  "Carnes": ["Alcatra", "Contra Filé", "Picanha", "Maminha", "Patinho", "Coxão Mole", "Coxão Duro", "Acém", "Paleta", "Músculo", "Costela", "Cupim", "Fraldinha", "Gordura/Retalho", "Osso"],
+  "Aves": ["Peito", "Coxa", "Sobrecoxa", "Asa", "Meio da Asa", "Coração", "Moela", "Fígado", "Carcaça/Dorso"],
+  "Suínos": ["Pernil", "Paleta", "Lombo", "Copa Lombo", "Costelinha", "Barriga/Panceta", "Pé", "Orelha", "Focinho", "Toucinho"],
+  "Peixes": ["Filé", "Posta", "Lombo", "Cabeça", "Carcaça/Espinha", "Vísceras"]
+};
+
+// Opções de gramaturas pré-definidas
+const OPCOES_GRAMATURA = [
+  { label: "100g", value: 0.100 },
+  { label: "150g", value: 0.150 },
+  { label: "200g", value: 0.200 },
+  { label: "250g", value: 0.250 },
+  { label: "300g", value: 0.300 },
+  { label: "400g", value: 0.400 },
+  { label: "500g", value: 0.500 },
+  { label: "1kg", value: 1.000 },
+  { label: "Personalizado", value: "custom" }
+];
+
+const App = () => {
+  const [activeTab, setActiveTab] = useState('producao');
+  const [registros, setRegistros] = useState([]);
+  
+  // Estado do Formulário de Entrada
+  const [categoria, setCategoria] = useState("Carnes");
+  const [pesoEntrada, setPesoEntrada] = useState('');
+  const dataHoje = new Date().toISOString().split('T')[0];
+  const [dataManipulacao, setDataManipulacao] = useState(dataHoje);
+  
+  // Estados para Adição de Cortes (Produção Atual)
+  const [producaoAtual, setProducaoAtual] = useState([]);
+  const [selecaoCorte, setSelecaoCorte] = useState(CATEGORIAS["Carnes"][0]);
+  const [gramaturaSelecionada, setGramaturaSelecionada] = useState(0.100);
+  const [quantidadePecas, setQuantidadePecas] = useState(1);
+  const [pesoPersonalizado, setPesoPersonalizado] = useState('');
+
+  // Carregar dados do LocalStorage ao iniciar
+  useEffect(() => {
+    const saved = localStorage.getItem('magarefe_v4_data');
+    if (saved) {
+      try {
+        setRegistros(JSON.parse(saved));
+      } catch (e) {
+        console.error("Erro ao carregar dados", e);
+      }
+    }
+  }, []);
+
+  // Sincronizar corte ao mudar categoria
+  useEffect(() => {
+    setSelecaoCorte(CATEGORIAS[categoria][0]);
+  }, [categoria]);
+
+  const salvarNoStorage = (novosRegistros) => {
+    localStorage.setItem('magarefe_v4_data', JSON.stringify(novosRegistros));
+    setRegistros(novosRegistros);
+  };
+
+  const pesoUnitarioAtual = useMemo(() => {
+    if (gramaturaSelecionada === "custom") {
+      return parseFloat(pesoPersonalizado) || 0;
+    }
+    return gramaturaSelecionada;
+  }, [gramaturaSelecionada, pesoPersonalizado]);
+
+  const pesoTotalCalculado = useMemo(() => {
+    const total = pesoUnitarioAtual * (parseInt(quantidadePecas) || 0);
+    return total.toFixed(3);
+  }, [pesoUnitarioAtual, quantidadePecas]);
+
+  const adicionarCorte = () => {
+    const pesoFinal = parseFloat(pesoTotalCalculado);
+    if (pesoFinal <= 0 || isNaN(pesoFinal)) return;
+    
+    const labelGramatura = gramaturaSelecionada === "custom" 
+      ? `${pesoUnitarioAtual.toFixed(3)}kg` 
+      : OPCOES_GRAMATURA.find(o => o.value === gramaturaSelecionada)?.label;
+
+    const novoCorte = {
+      id: Date.now(),
+      nome: selecaoCorte,
+      peso: pesoFinal,
+      qtd: parseInt(quantidadePecas),
+      gramatura: labelGramatura
+    };
+    
+    setProducaoAtual(prev => [...prev, novoCorte]);
+    setQuantidadePecas(1);
+    setPesoPersonalizado('');
+  };
+
+  const removerCorte = (id) => {
+    setProducaoAtual(prev => prev.filter(c => c.id !== id));
+  };
+
+  const finalizarLote = () => {
+    const bruto = parseFloat(pesoEntrada);
+    if (!bruto || bruto <= 0 || producaoAtual.length === 0) {
+      return;
+    }
+
+    const totalProduzido = producaoAtual.reduce((acc, curr) => acc + curr.peso, 0);
+    const quebra = bruto - totalProduzido;
+    const rendimento = (totalProduzido / bruto) * 100;
+
+    const novoRegistro = {
+      id: Date.now(),
+      dataRegistro: new Date().toISOString(),
+      dataManipulacao,
+      categoria,
+      pesoEntrada: bruto,
+      cortes: [...producaoAtual],
+      totalProduzido: parseFloat(totalProduzido.toFixed(3)),
+      quebra: parseFloat(quebra.toFixed(3)),
+      rendimento: rendimento.toFixed(2)
+    };
+
+    const novosRegistros = [novoRegistro, ...registros];
+    salvarNoStorage(novosRegistros);
+    
+    // Limpar formulário e navegar
+    setPesoEntrada('');
+    setProducaoAtual([]);
+    setActiveTab('historico'); // Muda para a aba Diário automaticamente
+  };
+
+  const excluirRegistro = (id) => {
+    const filtrados = registros.filter(r => r.id !== id);
+    salvarNoStorage(filtrados);
+  };
+
+  const metrics = useMemo(() => {
+    if (registros.length === 0) return { totalKg: "0.00", rendimentoMedio: "0", totalQuebra: "0.00" };
+    const totalKg = registros.reduce((acc, r) => acc + r.totalProduzido, 0);
+    const totalQuebra = registros.reduce((acc, r) => acc + (r.quebra || 0), 0);
+    const rendimentoMedio = registros.reduce((acc, r) => acc + parseFloat(r.rendimento), 0) / registros.length;
+    
+    return { 
+      totalKg: totalKg.toFixed(2), 
+      rendimentoMedio: rendimentoMedio.toFixed(1), 
+      totalQuebra: totalQuebra.toFixed(2) 
+    };
+  }, [registros]);
+
+  const formatarData = (dataStr) => {
+    const [year, month, day] = dataStr.split('-');
+    return `${day}/${month}/${year}`;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-24">
+      <header className="bg-red-700 text-white p-4 shadow-md sticky top-0 z-50">
+        <div className="max-w-md mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Beef size={24} />
+            <h1 className="text-lg font-bold">Magarefe Pro</h1>
+          </div>
+          <div className="text-[10px] bg-red-800 px-2 py-1 rounded font-black uppercase tracking-tighter">
+            Controle Diário
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-md mx-auto p-4">
+        
+        {/* ABA 1: LANÇAR PRODUÇÃO */}
+        {activeTab === 'producao' && (
+          <div className="space-y-4 animate-in fade-in duration-300">
+            <section className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <ClipboardList size={14} /> Dados da Matéria Prima
+              </h2>
+              
+              <div className="flex gap-2 overflow-x-auto pb-3 mb-4 scrollbar-hide">
+                {Object.keys(CATEGORIAS).map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setCategoria(cat)}
+                    className={`py-2 px-4 rounded-lg text-xs font-bold border transition-all whitespace-nowrap ${
+                      categoria === cat ? 'bg-red-600 border-red-600 text-white shadow-md' : 'bg-slate-50 border-slate-200 text-slate-500'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Data</label>
+                  <input type="date" value={dataManipulacao} onChange={(e) => setDataManipulacao(e.target.value)}
+                    className="w-full bg-transparent outline-none text-sm font-bold" />
+                </div>
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase mb-1">Peso Bruto (kg)</label>
+                  <input type="number" value={pesoEntrada} onChange={(e) => setPesoEntrada(e.target.value)} placeholder="0.000"
+                    className="w-full bg-transparent outline-none text-sm font-bold text-red-600" />
+                </div>
+              </div>
+            </section>
+
+            <section className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                <Layers size={14} /> Cortes Produzidos
+              </h2>
+              
+              <div className="space-y-3">
+                <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg outline-none text-sm font-bold appearance-none"
+                  value={selecaoCorte} onChange={(e) => setSelecaoCorte(e.target.value)}>
+                  {CATEGORIAS[categoria].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-6">
+                    <select className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs font-bold"
+                      value={gramaturaSelecionada} onChange={(e) => setGramaturaSelecionada(e.target.value === "custom" ? "custom" : parseFloat(e.target.value))}>
+                      {OPCOES_GRAMATURA.map(o => <option key={o.label} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </div>
+
+                  {gramaturaSelecionada === "custom" ? (
+                    <div className="col-span-4">
+                      <input type="number" value={pesoPersonalizado} onChange={(e) => setPesoPersonalizado(e.target.value)}
+                        placeholder="kg" className="w-full p-3 border border-red-200 rounded-lg text-xs font-bold outline-none" />
+                    </div>
+                  ) : (
+                    <div className="col-span-3">
+                      <input type="number" value={quantidadePecas} onChange={(e) => setQuantidadePecas(e.target.value)}
+                        className="w-full p-3 border border-slate-200 rounded-lg text-xs font-bold text-center" />
+                    </div>
+                  )}
+
+                  <div className={`${gramaturaSelecionada === "custom" ? "col-span-2" : "col-span-3"}`}>
+                    <button onClick={adicionarCorte} className="w-full h-full bg-slate-800 text-white rounded-lg flex items-center justify-center active:scale-95 transition-transform">
+                      <Plus size={20} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 text-white p-2.5 rounded-lg flex justify-between items-center px-4 shadow-inner">
+                  <span className="text-[9px] font-bold uppercase text-slate-500">Cálculo Total do Item</span>
+                  <span className="text-sm font-black text-green-400">{pesoTotalCalculado} kg</span>
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2 max-h-48 overflow-y-auto">
+                {producaoAtual.map(corte => (
+                  <div key={corte.id} className="flex items-center justify-between bg-slate-50 p-2 rounded-lg border border-slate-100 text-xs">
+                    <div>
+                      <span className="font-bold">{corte.qtd}x</span> {corte.nome} 
+                      <span className="ml-2 text-slate-400">({corte.gramatura})</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-black text-slate-700">{corte.peso.toFixed(3)}kg</span>
+                      <button onClick={() => removerCorte(corte.id)} className="text-slate-300 hover:text-red-500">
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {producaoAtual.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
+                  <div className="flex justify-between text-[10px] font-black uppercase px-1">
+                    <span className="text-blue-600">Total: {producaoAtual.reduce((acc, c) => acc + c.peso, 0).toFixed(2)}kg</span>
+                    <span className="text-amber-600">Rend: {((producaoAtual.reduce((acc, c) => acc + c.peso, 0) / parseFloat(pesoEntrada)) * 100).toFixed(1)}%</span>
+                  </div>
+                  <button onClick={finalizarLote} className="w-full bg-green-600 text-white py-4 rounded-xl font-black text-sm shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 uppercase tracking-widest">
+                    <CheckCircle2 size={18} /> Lançar no Diário
+                  </button>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* ABA 2: DIÁRIO */}
+        {activeTab === 'historico' && (
+          <div className="space-y-4 animate-in slide-in-from-right duration-300">
+            <div className="flex justify-between items-center px-1">
+               <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                 <History className="text-red-600" /> Diário de Produção
+               </h2>
+               <button onClick={() => window.print()} className="p-2 text-slate-400"><Printer size={20}/></button>
+            </div>
+
+            {registros.length === 0 ? (
+              <div className="bg-white p-12 rounded-2xl text-center border border-dashed border-slate-300">
+                <AlertCircle size={40} className="mx-auto text-slate-200 mb-2" />
+                <p className="text-slate-400 text-sm font-medium">Nenhum registro encontrado.</p>
+              </div>
+            ) : (
+              registros.map(reg => (
+                <div key={reg.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <div className="bg-slate-50 px-4 py-2 border-b border-slate-100 flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] bg-red-600 text-white px-2 py-0.5 rounded font-black uppercase">{reg.categoria}</span>
+                      <span className="text-sm font-bold text-slate-700">{formatarData(reg.dataManipulacao)}</span>
+                    </div>
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">ID #{reg.id.toString().slice(-4)}</span>
+                  </div>
+                  
+                  <div className="p-4">
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                      <div className="text-center">
+                        <span className="text-[8px] font-bold text-slate-400 uppercase block">Entrada</span>
+                        <span className="text-sm font-black text-slate-700">{reg.pesoEntrada}kg</span>
+                      </div>
+                      <div className="text-center border-x border-slate-100">
+                        <span className="text-[8px] font-bold text-green-500 uppercase block">Produzido</span>
+                        <span className="text-sm font-black text-green-600">{reg.totalProduzido}kg</span>
+                      </div>
+                      <div className="text-center">
+                        <span className="text-[8px] font-bold text-amber-500 uppercase block">Rend.</span>
+                        <span className="text-sm font-black text-amber-600">{reg.rendimento}%</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 border-t border-slate-50 pt-3">
+                      <p className="text-[9px] font-black text-slate-400 uppercase mb-2 flex items-center gap-1">
+                        <ChevronRight size={10}/> Detalhes do Lote
+                      </p>
+                      {reg.cortes.map((c, idx) => (
+                        <div key={idx} className="flex justify-between text-[11px]">
+                          <span className="text-slate-600"><span className="font-bold text-slate-800">{c.qtd}x</span> {c.nome}</span>
+                          <span className="font-black text-slate-400">{c.peso.toFixed(2)}kg</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-4">
+                      <button onClick={() => excluirRegistro(reg.id)} className="w-full py-2 text-[10px] text-red-400 bg-red-50 rounded-lg font-bold uppercase hover:bg-red-100 transition-colors">
+                        Excluir Registro
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* ABA 3: BALANÇO */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6 animate-in slide-in-from-right duration-300">
+            <h2 className="text-xl font-bold text-slate-800">Balanço Geral</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-widest">Produção Total</p>
+                <p className="text-2xl font-black text-blue-700">{metrics.totalKg}<span className="text-xs ml-1 font-bold">kg</span></p>
+              </div>
+              <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 text-center">
+                <p className="text-[10px] text-slate-400 uppercase font-bold mb-1 tracking-widest">Quebra Total</p>
+                <p className="text-2xl font-black text-red-600">{metrics.totalQuebra}<span className="text-xs ml-1 font-bold">kg</span></p>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 text-white p-6 rounded-3xl shadow-xl relative overflow-hidden">
+               <div className="relative z-10 text-center">
+                 <h3 className="text-xs font-bold text-slate-400 uppercase">Rendimento Global</h3>
+                 <p className="text-5xl font-black mt-2 text-green-400">{metrics.rendimentoMedio}%</p>
+                 <div className="w-full bg-slate-800 h-2.5 rounded-full mt-6 overflow-hidden">
+                    <div className="bg-green-500 h-full transition-all duration-1000" style={{ width: `${Math.min(parseFloat(metrics.rendimentoMedio), 100)}%` }}></div>
+                 </div>
+               </div>
+               <Beef size={100} className="absolute -right-10 -bottom-10 text-slate-800 opacity-20" />
+            </div>
+          </div>
+        )}
+
+      </main>
+
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 h-20 px-4 z-50 shadow-up">
+        <div className="max-w-md mx-auto flex justify-around items-center h-full">
+          <button onClick={() => setActiveTab('producao')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'producao' ? 'text-red-600 scale-110' : 'text-slate-400'}`}>
+            <Plus size={22} /><span className="text-[9px] font-black uppercase tracking-wider">Lançar</span>
+          </button>
+          <button onClick={() => setActiveTab('historico')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'historico' ? 'text-red-600 scale-110' : 'text-slate-400'}`}>
+            <History size={22} /><span className="text-[9px] font-black uppercase tracking-wider">Diário</span>
+          </button>
+          <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'dashboard' ? 'text-red-600 scale-110' : 'text-slate-400'}`}>
+            <BarChart3 size={22} /><span className="text-[9px] font-black uppercase tracking-wider">Balanço</span>
+          </button>
+        </div>
+      </nav>
+    </div>
+  );
+};
+
+export default App;
+
